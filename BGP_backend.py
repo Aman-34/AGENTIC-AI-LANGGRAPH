@@ -92,8 +92,8 @@ def get_blog(blog_id):
 # LLM
 # ----------------------------
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0,
+    model= "qwen/qwen3.6-27b",
+    temperature=0.8,
     max_tokens=500
 )
 # ----------------------------
@@ -286,50 +286,74 @@ g.add_edge("reducer", END)
 app = g.compile()
 
 # ----------------------------
+import requests
+
+import requests
+
 def publish_to_hashnode(title: str, content: str) -> dict:
     url = "https://gql.hashnode.com"
 
     headers = {
-        "Authorization": f"Bearer {HASHNODE_TOKEN}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {HASHNODE_TOKEN.strip()}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
     }
 
-    # 1️⃣ Get publication ID
-    query = f"""
-    query {{
-      user(username: "{HASHNODE_USERNAME}") {{
-        publications(first: 1) {{
-          edges {{
-            node {{
+    # -----------------------------
+    # STEP 1: GET USER + PUBLICATION
+    # -----------------------------
+    query = """
+    query {
+      me {
+        username
+        publications(first: 1) {
+          edges {
+            node {
               id
-            }}
-          }}
-        }}
-      }}
-    }}
+              url
+            }
+          }
+        }
+      }
+    }
     """
 
+    res = requests.post(url, json={"query": query}, headers=headers)
+
+    if res.status_code != 200:
+        return {
+            "error": "HTTP Error (Step 1)",
+            "status_code": res.status_code,
+            "response": res.text[:300]
+        }
+
     try:
-        res = requests.post(url, json={"query": query}, headers=headers)
         data = res.json()
+    except Exception:
+        return {
+            "error": "Invalid JSON response (Step 1)",
+            "response": res.text[:300]
+        }
 
-        edges = data["data"]["user"]["publications"]["edges"]
-        if not edges:
-            return {"error": "No publication found"}
+    if "errors" in data:
+        return {"error": data["errors"]}
 
-        publication_id = edges[0]["node"]["id"]
+    edges = data["data"]["me"]["publications"]["edges"]
+    if not edges:
+        return {"error": "No publication found"}
 
-    except Exception as e:
-        return {"error": f"Publication fetch error: {str(e)}"}
+    publication_id = edges[0]["node"]["id"]
 
-    # 2️⃣ Create Draft (NEW API)
+    # -----------------------------
+    # STEP 2: CREATE POST (WORKING MUTATION)
+    # -----------------------------
     mutation = """
-    mutation CreateDraft($input: CreateDraftInput!) {
-      createDraft(input: $input) {
-        draft {
+    mutation CreateStory($input: CreateStoryInput!) {
+      createStory(input: $input) {
+        post {
           id
           slug
-          title
+          url
         }
       }
     }
@@ -339,31 +363,39 @@ def publish_to_hashnode(title: str, content: str) -> dict:
         "input": {
             "title": title,
             "contentMarkdown": content,
-            "publicationId": publication_id
+            "publicationId": publication_id,
+            "tags": []
         }
     }
 
-    try:
-        res = requests.post(
-            url,
-            json={"query": mutation, "variables": variables},
-            headers=headers
-        )
+    res = requests.post(
+        url,
+        json={"query": mutation, "variables": variables},
+        headers=headers
+    )
 
-        result = res.json()
-
-        if "errors" in result:
-            return {"error": result["errors"]}
-
-        draft = result["data"]["createDraft"]["draft"]
-        slug = draft["slug"]
-
-        post_url = f"https://{HASHNODE_USERNAME}.hashnode.dev/{slug}"
-
+    if res.status_code != 200:
         return {
-            "post_url": post_url,
-            "note": "⚠️ Saved as draft. Publish manually from Hashnode dashboard."
+            "error": "HTTP Error (Step 2)",
+            "status_code": res.status_code,
+            "response": res.text[:300]
         }
 
-    except Exception as e:
-        return {"error": f"Publish failed: {str(e)}"}
+    try:
+        result = res.json()
+    except Exception:
+        return {
+            "error": "Invalid JSON response (Step 2)",
+            "response": res.text[:300]
+        }
+
+    if "errors" in result:
+        return {"error": result["errors"]}
+
+    post = result["data"]["createStory"]["post"]
+
+    return {
+        "post_url": post["url"],
+        "slug": post["slug"],
+        "message": "✅ Blog published successfully"
+    }

@@ -7,3 +7,8 @@ langchain-core
 langgraph
 langchain-groq
 groq
+langchain-text-splitters
+langchain-community
+langchain-huggingface
+sentence-transformers
+langgraph-checkpoint-sqlite
